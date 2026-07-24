@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
 from products import add_product, delete_product, find_product_by_sku, update_product_quantity, delete_product
 
@@ -8,12 +8,12 @@ class ProductCreate(BaseModel):
 
     name: str
     sku: str
-    price: float
-    quantity: int
+    price: float = Field(ge=0)
+    quantity: int = Field(ge=0)
 
 class QuantityUpdate(BaseModel):
 
-    quantity: int
+    quantity: int = Field(ge=0)
 
 
 
