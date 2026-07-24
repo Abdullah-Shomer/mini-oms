@@ -1,5 +1,5 @@
 from fastapi.testclient import TestClient
-from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
+from starlette.status import HTTP_200_OK, HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND, HTTP_422_UNPROCESSABLE_CONTENT
 from api import app , products
 
 
@@ -110,7 +110,7 @@ def test_update_negative_quantity():
     product_response = client.get("/products/KB-001")
 
 
-    assert response.status_code == HTTP_400_BAD_REQUEST
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
     assert product_response.json()["quantity"] == 10
 
 
