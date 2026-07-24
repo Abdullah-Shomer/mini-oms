@@ -5,15 +5,11 @@ from api import app , products
 
 client = TestClient(app)
 
-
-
 def test_root():
     response = client.get("/")
 
     assert response.status_code == HTTP_200_OK
     assert response.json() == {"message": "Mini OMS API"}
-
-
 
 
 def test_create_product():
@@ -27,7 +23,6 @@ def test_create_product():
     assert response.status_code == HTTP_201_CREATED
     assert response.json()["sku"] == "KB-001"
     assert len(products) == 1 
-
 
 
 def test_create_duplicate_product():
@@ -49,7 +44,6 @@ def test_create_duplicate_product():
     assert len(products) == 1 
 
 
-
 def test_get_existing_product():
     products.clear()
     client.post("/products", json={
@@ -65,15 +59,12 @@ def test_get_existing_product():
     assert response.json()["sku"] == "KB-001"
 
 
-
-
 def test_get_missing_product():
     products.clear()
     response = client.get("/products/XX-999")
 
     assert response.status_code == HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Product not found"
-
 
 
 def test_update_product_quantity():
@@ -90,8 +81,7 @@ def test_update_product_quantity():
                 "quantity": 20
                 })
     assert response.status_code == HTTP_200_OK
-    assert response.json()["quantity"] == 20
-    
+    assert response.json()["quantity"] == 20    
 
 
 def test_update_negative_quantity():
@@ -114,7 +104,6 @@ def test_update_negative_quantity():
     assert product_response.json()["quantity"] == 10
 
 
-
 def test_delete_product():
     products.clear()
     client.post("/products", json={
@@ -130,7 +119,6 @@ def test_delete_product():
     assert response.status_code == HTTP_200_OK
     assert response.json()["message"] == "Product deleted successfully"
     assert len(products) == 0
-
 
 
 def test_delete_missing_product():
@@ -165,3 +153,34 @@ def test_list_products():
 
     assert response.status_code == HTTP_200_OK
     assert len(response.json()) == 2
+
+
+def test_create_product_empty_name():
+    products.clear()
+
+    response = client.post("/products", json={
+                    "name":"",
+                    "sku": "KB-001",
+                    "price": 25,
+                    "quantity": 10
+                    })
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert len(products) == 0
+
+
+def test_create_product_empty_sku():
+    products.clear()
+
+    response = client.post("/products", json={
+                    "name":"Keyboard",
+                    "sku": "",
+                    "price": 25,
+                    "quantity": 10
+                    })
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert len(products) == 0 
+
+
+

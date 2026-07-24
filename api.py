@@ -6,8 +6,8 @@ from products import add_product, delete_product, find_product_by_sku, update_pr
 
 class ProductCreate(BaseModel):
 
-    name: str
-    sku: str
+    name: str = Field(min_length=1)
+    sku: str = Field(min_length=1)
     price: float = Field(ge=0)
     quantity: int = Field(ge=0)
 
