@@ -1,19 +1,30 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field, field_validator
-from starlette.status import HTTP_201_CREATED, HTTP_400_BAD_REQUEST, HTTP_404_NOT_FOUND
+from datetime import datetime
+from decimal import Decimal
+from typing import Annotated
 
-from products import (
-    add_product,
-    delete_product,
-    find_product_by_sku,
-    update_product_quantity,
+from fastapi import Depends, FastAPI, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy.orm import Session
+from starlette.status import (
+    HTTP_201_CREATED,
+    HTTP_404_NOT_FOUND,
+    HTTP_409_CONFLICT,
 )
+
+from database import get_db
+from product_repository import create_product as create_product_in_db
+from product_repository import delete_product as delete_product_from_db
+from product_repository import find_product_by_sku as find_product_by_sku_in_db
+from product_repository import list_products as list_products_from_db
+from product_repository import update_product_quantity as update_quantity_in_db
+
+DatabaseSession = Annotated[Session, Depends(get_db)]
 
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=1)
     sku: str = Field(min_length=1)
-    price: float = Field(ge=0)
+    price: Decimal = Field(ge=0, max_digits=10, decimal_places=2)
     quantity: int = Field(ge=0)
 
     @field_validator("name", "sku")
@@ -25,12 +36,22 @@ class ProductCreate(BaseModel):
         return cleaned_value
 
 
+class ProductResponse(BaseModel):
+    id: int
+    name: str
+    sku: str
+    price: Decimal
+    quantity: int
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class QuantityUpdate(BaseModel):
     quantity: int = Field(ge=0)
 
 
 app = FastAPI()
-products = []
 
 
 @app.get("/")
@@ -40,53 +61,62 @@ def root():
     return message
 
 
-@app.get("/products")
-def list_products():
+@app.get("/products", response_model=list[ProductResponse])
+def list_products(db: DatabaseSession):
+    return list_products_from_db(db)
 
-    return products
 
-
-@app.post("/products", status_code=HTTP_201_CREATED)
-def create_new_product(product: ProductCreate):
-
-    result = add_product(
-        products, product.name, product.sku, product.price, product.quantity
+@app.post(
+    "/products",
+    status_code=HTTP_201_CREATED,
+    response_model=ProductResponse,
+)
+def create_new_product(
+    product: ProductCreate,
+    db: DatabaseSession,
+):
+    created_product = create_product_in_db(
+        db,
+        product.name,
+        product.sku,
+        product.price,
+        product.quantity,
     )
 
-    if result is False:
+    if created_product is None:
         raise HTTPException(
-            status_code=HTTP_400_BAD_REQUEST, detail="Could not add product"
+            status_code=HTTP_409_CONFLICT,
+            detail="Product with this SKU already exists",
         )
 
-    return product
+    return created_product
 
 
-@app.get("/products/{sku}")
-def get_product(sku: str):
-    found_product = find_product_by_sku(products, sku)
+@app.get("/products/{sku}", response_model=ProductResponse)
+def get_product(sku: str, db: DatabaseSession):
+    found_product = find_product_by_sku_in_db(
+        db,
+        sku,
+    )
     if found_product is None:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
     return found_product
 
 
-@app.patch("/products/{sku}/quantity")
-def update_quantity(sku: str, update: QuantityUpdate):
-    result = update_product_quantity(products, sku, update.quantity)
+@app.patch("/products/{sku}/quantity", response_model=ProductResponse)
+def update_quantity(sku: str, db: DatabaseSession, update: QuantityUpdate):
+    result = update_quantity_in_db(db, sku, update.quantity)
 
-    if result is False:
-        raise HTTPException(
-            status_code=HTTP_400_BAD_REQUEST, detail="Could not update quantity"
-        )
-
-    updated_product = find_product_by_sku(products, sku)
-    return updated_product
+    if result is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
+    return result
 
 
 @app.delete("/products/{sku}")
-def remove_product(sku: str):
+def remove_product(sku: str, db: DatabaseSession):
 
-    result = delete_product(products, sku)
+    result = delete_product_from_db(db, sku)
 
     if result is False:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
