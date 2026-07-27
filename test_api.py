@@ -2,12 +2,12 @@ from fastapi.testclient import TestClient
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,
-    HTTP_400_BAD_REQUEST,
     HTTP_404_NOT_FOUND,
+    HTTP_409_CONFLICT,
     HTTP_422_UNPROCESSABLE_CONTENT,
 )
 
-from api import app, products
+from api import app
 
 client = TestClient(app)
 
@@ -20,18 +20,19 @@ def test_root():
 
 
 def test_create_product():
-    products.clear()
+
     response = client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
     assert response.status_code == HTTP_201_CREATED
     assert response.json()["sku"] == "KB-001"
-    assert len(products) == 1
+    list_response = client.get("/products")
+    assert len(list_response.json()) == 1
 
 
 def test_create_duplicate_product():
-    products.clear()
+
     client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
@@ -41,12 +42,12 @@ def test_create_duplicate_product():
         json={"name": "Another Keyboard", "sku": "KB-001", "price": 30, "quantity": 5},
     )
 
-    assert duplicate_response.status_code == HTTP_400_BAD_REQUEST
-    assert len(products) == 1
+    assert duplicate_response.status_code == HTTP_409_CONFLICT
+    assert len(client.get("/products").json()) == 1
 
 
 def test_get_existing_product():
-    products.clear()
+
     client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
@@ -59,7 +60,7 @@ def test_get_existing_product():
 
 
 def test_get_missing_product():
-    products.clear()
+
     response = client.get("/products/XX-999")
 
     assert response.status_code == HTTP_404_NOT_FOUND
@@ -67,7 +68,7 @@ def test_get_missing_product():
 
 
 def test_update_product_quantity():
-    products.clear()
+
     client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
@@ -79,7 +80,7 @@ def test_update_product_quantity():
 
 
 def test_update_negative_quantity():
-    products.clear()
+
     client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
@@ -93,7 +94,7 @@ def test_update_negative_quantity():
 
 
 def test_delete_product():
-    products.clear()
+
     client.post(
         "/products",
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
@@ -103,21 +104,19 @@ def test_delete_product():
 
     assert response.status_code == HTTP_200_OK
     assert response.json()["message"] == "Product deleted successfully"
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_delete_missing_product():
-    products.clear()
 
     response = client.delete("/products/XX-999")
 
     assert response.status_code == HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Product not found"
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_list_products():
-    products.clear()
 
     client.post(
         "/products",
@@ -136,40 +135,36 @@ def test_list_products():
 
 
 def test_create_product_empty_name():
-    products.clear()
 
     response = client.post(
         "/products", json={"name": "", "sku": "KB-001", "price": 25, "quantity": 10}
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_create_product_empty_sku():
-    products.clear()
 
     response = client.post(
         "/products", json={"name": "Keyboard", "sku": "", "price": 25, "quantity": 10}
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_create_product_blank_name():
-    products.clear()
 
     response = client.post(
         "/products", json={"name": "   ", "sku": "KB-001", "price": 25, "quantity": 10}
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_create_product_blank_sku():
-    products.clear()
 
     response = client.post(
         "/products",
@@ -177,11 +172,10 @@ def test_create_product_blank_sku():
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert len(products) == 0
+    assert client.get("/products").json() == []
 
 
 def test_create_product_strips_whitespace():
-    products.clear()
 
     response = client.post(
         "/products",
@@ -191,4 +185,4 @@ def test_create_product_strips_whitespace():
     assert response.status_code == HTTP_201_CREATED
     assert response.json()["name"] == "Keyboard"
     assert response.json()["sku"] == "KB-001"
-    assert len(products) == 1
+    assert len(client.get("/products").json()) == 1
