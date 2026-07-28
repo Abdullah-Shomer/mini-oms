@@ -186,3 +186,285 @@ def test_create_product_strips_whitespace():
     assert response.json()["name"] == "Keyboard"
     assert response.json()["sku"] == "KB-001"
     assert len(client.get("/products").json()) == 1
+
+
+def test_create_order_success():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+    body = response.json()
+
+    assert response.status_code == HTTP_201_CREATED
+    assert body["status"] == "pending"
+    assert len(body["items"]) == 1
+    assert body["items"][0]["quantity"] == 2
+    assert body["items"][0]["unit_price"] == "25.00"
+
+    product_response = client.get("/products/KB-001")
+
+    assert product_response.json()["quantity"] == 8
+
+
+def test_create_order_rolls_back_when_product_is_missing():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+
+    response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                },
+                {
+                    "sku": "XX-999",
+                    "quantity": 1,
+                },
+            ]
+        },
+    )
+
+    product_response = client.get("/products/KB-001")
+
+    assert response.status_code == HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "Product not found: XX-999"
+    assert product_response.json()["quantity"] == 10
+
+
+def test_create_order_rejects_insufficient_stock():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 11,
+                }
+            ]
+        },
+    )
+
+    product_response = client.get("/products/KB-001")
+
+    assert response.status_code == HTTP_409_CONFLICT
+    assert response.json()["detail"] == "Insufficient stock for SKU: KB-001"
+    assert product_response.json()["quantity"] == 10
+
+
+def test_create_order_rejects_duplicate_skus():
+    response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {"sku": "KB-001", "quantity": 1},
+                {"sku": "KB-001", "quantity": 2},
+            ]
+        },
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert (
+        "Each SKU may appear only once per order" in response.json()["detail"][0]["msg"]
+    )
+
+
+def test_create_order_rejects_empty_items():
+    response = client.post(
+        "/orders",
+        json={"items": []},
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_create_order_rejects_zero_quantity():
+    response = client.post(
+        "/orders", json={"items": [{"sku": "KB-001", "quantity": 0}]}
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_create_order_rejects_blank_sku():
+    response = client.post("/orders", json={"items": [{"sku": "     ", "quantity": 1}]})
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert "SKU must not be blank" in response.json()["detail"][0]["msg"]
+
+
+def test_list_orders():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+
+    response = client.get("/orders")
+
+    assert response.status_code == HTTP_200_OK
+    assert len(response.json()) == 1
+    assert response.json()[0]["status"] == "pending"
+    assert response.json()[0]["items"][0]["quantity"] == 2
+
+
+def test_get_existing_order():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    create_response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+
+    order_id = create_response.json()["id"]
+    response = client.get(f"/orders/{order_id}")
+
+    assert response.status_code == HTTP_200_OK
+    assert response.json()["id"] == order_id
+    assert response.json()["items"][0]["quantity"] == 2
+
+
+def test_get_missing_order():
+    response = client.get("/orders/999999")
+
+    assert response.status_code == HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "Order not found"
+
+
+def test_cancel_order_restores_stock():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    create_response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+    order_id = create_response.json()["id"]
+    response = client.post(f"/orders/{order_id}/cancel")
+    product_response = client.get("/products/KB-001")
+
+    assert response.status_code == HTTP_200_OK
+    assert response.json()["status"] == "cancelled"
+    assert product_response.json()["quantity"] == 10
+
+
+def test_cancel_order_twice_does_not_restore_stock_twice():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    create_response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+
+    order_id = create_response.json()["id"]
+
+    first_response = client.post(f"/orders/{order_id}/cancel")
+    second_response = client.post(f"/orders/{order_id}/cancel")
+
+    product_response = client.get("/products/KB-001")
+
+    assert first_response.status_code == HTTP_200_OK
+    assert first_response.json()["status"] == "cancelled"
+
+    assert second_response.status_code == HTTP_409_CONFLICT
+    assert second_response.json()["detail"] == (
+        f"Order is already cancelled: {order_id}"
+    )
+
+    assert product_response.json()["quantity"] == 10
+
+
+def test_cancel_missing_order():
+    response = client.post("/orders/999999/cancel")
+
+    assert response.status_code == HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "Order not found: 999999"

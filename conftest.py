@@ -4,7 +4,7 @@ from sqlalchemy.orm import sessionmaker
 
 from api import app
 from database import database_url, get_db
-from models import Product
+from models import Order, Product
 
 test_database_url = database_url.set(database="mini_oms_test")
 
@@ -26,11 +26,13 @@ app.dependency_overrides[get_db] = override_get_db
 @pytest.fixture(autouse=True)
 def clean_database():
     with TestSessionLocal() as session:
+        session.execute(delete(Order))
         session.execute(delete(Product))
         session.commit()
 
     yield
 
     with TestSessionLocal() as session:
+        session.execute(delete(Order))
         session.execute(delete(Product))
         session.commit()
