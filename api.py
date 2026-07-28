@@ -14,7 +14,10 @@ from starlette.status import (
 from database import get_db
 from order_repository import (
     InsufficientStockError,
+    OrderAlreadyCancelledError,
+    OrderNotFoundError,
     ProductNotFoundError,
+    cancel_order,
     create_order,
     find_order_by_id,
     list_orders,
@@ -220,3 +223,24 @@ def get_order(order_id: int, db: DatabaseSession):
     if found_order is None:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Order not found")
     return found_order
+
+
+@app.post(
+    "/orders/{order_id}/cancel",
+    response_model=OrderResponse,
+)
+def cancel_existing_order(order_id: int, db: DatabaseSession):
+    try:
+        return cancel_order(db, order_id)
+
+    except OrderNotFoundError as error:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail=f"Order not found: {error}",
+        ) from error
+
+    except OrderAlreadyCancelledError as error:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail=f"Order is already cancelled: {error}",
+        ) from error

@@ -65,3 +65,51 @@ def find_order_by_id(
     )
 
     return session.scalar(statement)
+
+
+class OrderNotFoundError(Exception):
+    pass
+
+
+class OrderAlreadyCancelledError(Exception):
+    pass
+
+
+def cancel_order(
+    session: Session,
+    order_id: int,
+) -> Order:
+    try:
+        statement = (
+            select(Order)
+            .where(Order.id == order_id)
+            .options(selectinload(Order.items))
+            .with_for_update()
+        )
+
+        order = session.scalar(statement)
+
+        if order is None:
+            raise OrderNotFoundError(order_id)
+
+        if order.status == "cancelled":
+            raise OrderAlreadyCancelledError(order_id)
+
+        for item in order.items:
+            product_statement = (
+                select(Product).where(Product.id == item.product_id).with_for_update()
+            )
+
+            product = session.scalar(product_statement)
+            product.quantity += item.quantity
+
+        order.status = "cancelled"
+
+        session.commit()
+        session.refresh(order)
+
+        return order
+
+    except Exception:
+        session.rollback()
+        raise

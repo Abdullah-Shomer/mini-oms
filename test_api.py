@@ -391,3 +391,80 @@ def test_get_missing_order():
 
     assert response.status_code == HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Order not found"
+
+
+def test_cancel_order_restores_stock():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    create_response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+    order_id = create_response.json()["id"]
+    response = client.post(f"/orders/{order_id}/cancel")
+    product_response = client.get("/products/KB-001")
+
+    assert response.status_code == HTTP_200_OK
+    assert response.json()["status"] == "cancelled"
+    assert product_response.json()["quantity"] == 10
+
+
+def test_cancel_order_twice_does_not_restore_stock_twice():
+    client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    create_response = client.post(
+        "/orders",
+        json={
+            "items": [
+                {
+                    "sku": "KB-001",
+                    "quantity": 2,
+                }
+            ]
+        },
+    )
+
+    order_id = create_response.json()["id"]
+
+    first_response = client.post(f"/orders/{order_id}/cancel")
+    second_response = client.post(f"/orders/{order_id}/cancel")
+
+    product_response = client.get("/products/KB-001")
+
+    assert first_response.status_code == HTTP_200_OK
+    assert first_response.json()["status"] == "cancelled"
+
+    assert second_response.status_code == HTTP_409_CONFLICT
+    assert second_response.json()["detail"] == (
+        f"Order is already cancelled: {order_id}"
+    )
+
+    assert product_response.json()["quantity"] == 10
+
+
+def test_cancel_missing_order():
+    response = client.post("/orders/999999/cancel")
+
+    assert response.status_code == HTTP_404_NOT_FOUND
+    assert response.json()["detail"] == "Order not found: 999999"
