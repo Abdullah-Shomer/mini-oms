@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -12,6 +12,13 @@ from starlette.status import (
 )
 
 from database import get_db
+from order_repository import (
+    InsufficientStockError,
+    ProductNotFoundError,
+    create_order,
+    find_order_by_id,
+    list_orders,
+)
 from product_repository import create_product as create_product_in_db
 from product_repository import delete_product as delete_product_from_db
 from product_repository import find_product_by_sku as find_product_by_sku_in_db
@@ -122,3 +129,94 @@ def remove_product(sku: str, db: DatabaseSession):
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Product not found")
 
     return {"message": "Product deleted successfully"}
+
+
+class OrderItemCreate(BaseModel):
+    sku: str = Field(min_length=1)
+    quantity: int = Field(gt=0)
+
+    @field_validator("sku")
+    @classmethod
+    def validate_sku(cls, value: str) -> str:
+        cleaned_value = value.strip()
+
+        if not cleaned_value:
+            raise ValueError("SKU must not be blank")
+
+        return cleaned_value
+
+
+class OrderCreate(BaseModel):
+    items: list[OrderItemCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_unique_skus(self):
+        skus = []
+
+        for item in self.items:
+            skus.append(item.sku)
+
+        if len(skus) != len(set(skus)):
+            raise ValueError("Each SKU may appear only once per order")
+
+        return self
+
+
+class OrderItemResponse(BaseModel):
+    id: int
+    product_id: int
+    quantity: int
+    unit_price: Decimal
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class OrderResponse(BaseModel):
+    id: int
+    status: str
+    created_at: datetime
+    items: list[OrderItemResponse]
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+@app.post(
+    "/orders",
+    status_code=HTTP_201_CREATED,
+    response_model=OrderResponse,
+)
+def create_new_order(order_data: OrderCreate, db: DatabaseSession):
+    items = []
+
+    for item in order_data.items:
+        items.append((item.sku, item.quantity))
+
+    try:
+        return create_order(db, items)
+
+    except ProductNotFoundError as error:
+        raise HTTPException(
+            status_code=HTTP_404_NOT_FOUND,
+            detail=f"Product not found: {error}",
+        ) from error
+
+    except InsufficientStockError as error:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail=f"Insufficient stock for SKU: {error}",
+        ) from error
+
+
+@app.get("/orders", response_model=list[OrderResponse])
+def get_orders(db: DatabaseSession):
+    return list_orders(db)
+
+
+@app.get("/orders/{order_id}", response_model=OrderResponse)
+def get_order(order_id: int, db: DatabaseSession):
+
+    found_order = find_order_by_id(db, order_id)
+
+    if found_order is None:
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="Order not found")
+    return found_order
