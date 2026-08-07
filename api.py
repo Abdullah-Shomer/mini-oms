@@ -5,6 +5,7 @@ from typing import Annotated, Optional
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
@@ -147,6 +148,13 @@ def root():
     message = {"message": "Mini OMS API"}
 
     return message
+
+
+@app.get("/health")
+def health_check(db: DatabaseSession):
+    db.execute(text("SELECT 1"))
+
+    return {"status": "healthy"}
 
 
 @app.get("/products", response_model=list[ProductResponse])
