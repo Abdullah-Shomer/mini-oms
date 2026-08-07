@@ -2,11 +2,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    db_host: str
-    db_port: int
-    db_name: str
-    db_user: str
-    db_password: str
+    database_url: str = ""
+
+    db_host: str = "localhost"
+    db_port: int = 5432
+    db_name: str = "mini_oms"
+    db_user: str = "mini_oms_user"
+    db_password: str = ""
 
     model_config = SettingsConfigDict(
         env_file=".env",
