@@ -2,12 +2,16 @@ from fastapi.testclient import TestClient
 from starlette.status import (
     HTTP_200_OK,
     HTTP_201_CREATED,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
     HTTP_422_UNPROCESSABLE_CONTENT,
 )
 
 from api import app
+from security import create_access_token
+from user_repository import create_user
 
 client = TestClient(app)
 
@@ -19,10 +23,11 @@ def test_root():
     assert response.json() == {"message": "Mini OMS API"}
 
 
-def test_create_product():
+def test_create_product(admin_headers):
 
     response = client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
     assert response.status_code == HTTP_201_CREATED
@@ -31,14 +36,16 @@ def test_create_product():
     assert len(list_response.json()) == 1
 
 
-def test_create_duplicate_product():
+def test_create_duplicate_product(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
     duplicate_response = client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Another Keyboard", "sku": "KB-001", "price": 30, "quantity": 5},
     )
 
@@ -46,10 +53,11 @@ def test_create_duplicate_product():
     assert len(client.get("/products").json()) == 1
 
 
-def test_get_existing_product():
+def test_get_existing_product(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
 
@@ -67,64 +75,73 @@ def test_get_missing_product():
     assert response.json()["detail"] == "Product not found"
 
 
-def test_update_product_quantity():
+def test_update_product_quantity(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
 
-    response = client.patch("/products/KB-001/quantity", json={"quantity": 20})
+    response = client.patch(
+        "/products/KB-001/quantity", headers=admin_headers, json={"quantity": 20}
+    )
     assert response.status_code == HTTP_200_OK
     assert response.json()["quantity"] == 20
 
 
-def test_update_negative_quantity():
+def test_update_negative_quantity(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
 
-    response = client.patch("/products/KB-001/quantity", json={"quantity": -5})
+    response = client.patch(
+        "/products/KB-001/quantity", headers=admin_headers, json={"quantity": -5}
+    )
     product_response = client.get("/products/KB-001")
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
     assert product_response.json()["quantity"] == 10
 
 
-def test_delete_product():
+def test_delete_product(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
 
-    response = client.delete("/products/KB-001")
+    response = client.delete("/products/KB-001", headers=admin_headers)
 
     assert response.status_code == HTTP_200_OK
     assert response.json()["message"] == "Product deleted successfully"
     assert client.get("/products").json() == []
 
 
-def test_delete_missing_product():
+def test_delete_missing_product(admin_headers):
 
-    response = client.delete("/products/XX-999")
+    response = client.delete("/products/XX-999", headers=admin_headers)
 
     assert response.status_code == HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Product not found"
     assert client.get("/products").json() == []
 
 
-def test_list_products():
+def test_list_products(admin_headers):
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-001", "price": 25, "quantity": 10},
     )
 
     client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "KB-002", "price": 25, "quantity": 10},
     )
 
@@ -134,40 +151,47 @@ def test_list_products():
     assert len(response.json()) == 2
 
 
-def test_create_product_empty_name():
-
-    response = client.post(
-        "/products", json={"name": "", "sku": "KB-001", "price": 25, "quantity": 10}
-    )
-
-    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert client.get("/products").json() == []
-
-
-def test_create_product_empty_sku():
-
-    response = client.post(
-        "/products", json={"name": "Keyboard", "sku": "", "price": 25, "quantity": 10}
-    )
-
-    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert client.get("/products").json() == []
-
-
-def test_create_product_blank_name():
-
-    response = client.post(
-        "/products", json={"name": "   ", "sku": "KB-001", "price": 25, "quantity": 10}
-    )
-
-    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
-    assert client.get("/products").json() == []
-
-
-def test_create_product_blank_sku():
+def test_create_product_empty_name(admin_headers):
 
     response = client.post(
         "/products",
+        headers=admin_headers,
+        json={"name": "", "sku": "KB-001", "price": 25, "quantity": 10},
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert client.get("/products").json() == []
+
+
+def test_create_product_empty_sku(admin_headers):
+
+    response = client.post(
+        "/products",
+        headers=admin_headers,
+        json={"name": "Keyboard", "sku": "", "price": 25, "quantity": 10},
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert client.get("/products").json() == []
+
+
+def test_create_product_blank_name(admin_headers):
+
+    response = client.post(
+        "/products",
+        headers=admin_headers,
+        json={"name": "   ", "sku": "KB-001", "price": 25, "quantity": 10},
+    )
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+    assert client.get("/products").json() == []
+
+
+def test_create_product_blank_sku(admin_headers):
+
+    response = client.post(
+        "/products",
+        headers=admin_headers,
         json={"name": "Keyboard", "sku": "   ", "price": 25, "quantity": 10},
     )
 
@@ -175,10 +199,11 @@ def test_create_product_blank_sku():
     assert client.get("/products").json() == []
 
 
-def test_create_product_strips_whitespace():
+def test_create_product_strips_whitespace(admin_headers):
 
     response = client.post(
         "/products",
+        headers=admin_headers,
         json={"name": "  Keyboard  ", "sku": "  KB-001  ", "price": 25, "quantity": 10},
     )
 
@@ -188,9 +213,10 @@ def test_create_product_strips_whitespace():
     assert len(client.get("/products").json()) == 1
 
 
-def test_create_order_success():
+def test_create_order_success(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -200,6 +226,7 @@ def test_create_order_success():
     )
     response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -222,9 +249,10 @@ def test_create_order_success():
     assert product_response.json()["quantity"] == 8
 
 
-def test_create_order_rolls_back_when_product_is_missing():
+def test_create_order_rolls_back_when_product_is_missing(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -235,6 +263,7 @@ def test_create_order_rolls_back_when_product_is_missing():
 
     response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -256,9 +285,10 @@ def test_create_order_rolls_back_when_product_is_missing():
     assert product_response.json()["quantity"] == 10
 
 
-def test_create_order_rejects_insufficient_stock():
+def test_create_order_rejects_insufficient_stock(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -268,6 +298,7 @@ def test_create_order_rejects_insufficient_stock():
     )
     response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -285,9 +316,10 @@ def test_create_order_rejects_insufficient_stock():
     assert product_response.json()["quantity"] == 10
 
 
-def test_create_order_rejects_duplicate_skus():
+def test_create_order_rejects_duplicate_skus(operator_headers):
     response = client.post(
         "/orders",
+        headers=operator_headers,
         json={
             "items": [
                 {"sku": "KB-001", "quantity": 1},
@@ -302,33 +334,41 @@ def test_create_order_rejects_duplicate_skus():
     )
 
 
-def test_create_order_rejects_empty_items():
+def test_create_order_rejects_empty_items(operator_headers):
     response = client.post(
         "/orders",
+        headers=operator_headers,
         json={"items": []},
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
 
 
-def test_create_order_rejects_zero_quantity():
+def test_create_order_rejects_zero_quantity(operator_headers):
     response = client.post(
-        "/orders", json={"items": [{"sku": "KB-001", "quantity": 0}]}
+        "/orders",
+        headers=operator_headers,
+        json={"items": [{"sku": "KB-001", "quantity": 0}]},
     )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
 
 
-def test_create_order_rejects_blank_sku():
-    response = client.post("/orders", json={"items": [{"sku": "     ", "quantity": 1}]})
+def test_create_order_rejects_blank_sku(operator_headers):
+    response = client.post(
+        "/orders",
+        headers=operator_headers,
+        json={"items": [{"sku": "     ", "quantity": 1}]},
+    )
 
     assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
     assert "SKU must not be blank" in response.json()["detail"][0]["msg"]
 
 
-def test_list_orders():
+def test_list_orders(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -338,6 +378,7 @@ def test_list_orders():
     )
     client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -348,7 +389,7 @@ def test_list_orders():
         },
     )
 
-    response = client.get("/orders")
+    response = client.get("/orders", headers=admin_headers)
 
     assert response.status_code == HTTP_200_OK
     assert len(response.json()) == 1
@@ -356,9 +397,10 @@ def test_list_orders():
     assert response.json()[0]["items"][0]["quantity"] == 2
 
 
-def test_get_existing_order():
+def test_get_existing_order(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -368,6 +410,7 @@ def test_get_existing_order():
     )
     create_response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -379,7 +422,7 @@ def test_get_existing_order():
     )
 
     order_id = create_response.json()["id"]
-    response = client.get(f"/orders/{order_id}")
+    response = client.get(f"/orders/{order_id}", headers=admin_headers)
 
     assert response.status_code == HTTP_200_OK
     assert response.json()["id"] == order_id
@@ -393,9 +436,10 @@ def test_get_missing_order():
     assert response.json()["detail"] == "Order not found"
 
 
-def test_cancel_order_restores_stock():
+def test_cancel_order_restores_stock(admin_headers):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -405,6 +449,7 @@ def test_cancel_order_restores_stock():
     )
     create_response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -415,7 +460,7 @@ def test_cancel_order_restores_stock():
         },
     )
     order_id = create_response.json()["id"]
-    response = client.post(f"/orders/{order_id}/cancel")
+    response = client.post(f"/orders/{order_id}/cancel", headers=admin_headers)
     product_response = client.get("/products/KB-001")
 
     assert response.status_code == HTTP_200_OK
@@ -423,9 +468,12 @@ def test_cancel_order_restores_stock():
     assert product_response.json()["quantity"] == 10
 
 
-def test_cancel_order_twice_does_not_restore_stock_twice():
+def test_cancel_order_twice_does_not_restore_stock_twice(
+    admin_headers,
+):
     client.post(
         "/products",
+        headers=admin_headers,
         json={
             "name": "Keyboard",
             "sku": "KB-001",
@@ -435,6 +483,7 @@ def test_cancel_order_twice_does_not_restore_stock_twice():
     )
     create_response = client.post(
         "/orders",
+        headers=admin_headers,
         json={
             "items": [
                 {
@@ -447,8 +496,8 @@ def test_cancel_order_twice_does_not_restore_stock_twice():
 
     order_id = create_response.json()["id"]
 
-    first_response = client.post(f"/orders/{order_id}/cancel")
-    second_response = client.post(f"/orders/{order_id}/cancel")
+    first_response = client.post(f"/orders/{order_id}/cancel", headers=admin_headers)
+    second_response = client.post(f"/orders/{order_id}/cancel", headers=admin_headers)
 
     product_response = client.get("/products/KB-001")
 
@@ -463,8 +512,197 @@ def test_cancel_order_twice_does_not_restore_stock_twice():
     assert product_response.json()["quantity"] == 10
 
 
-def test_cancel_missing_order():
-    response = client.post("/orders/999999/cancel")
+def test_cancel_missing_order(operator_headers):
+    response = client.post("/orders/999999/cancel", headers=operator_headers)
 
     assert response.status_code == HTTP_404_NOT_FOUND
     assert response.json()["detail"] == "Order not found: 999999"
+
+
+def test_register_user():
+    response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+
+    assert response.status_code == HTTP_201_CREATED
+    assert response.json()["username"] == "abdallah"
+    assert response.json()["role"] == "operator"
+    assert "password" not in response.json()
+    assert "hashed_password" not in response.json()
+
+
+def test_register_user_rejects_duplicate_username():
+    first_response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+
+    second_response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+
+    assert first_response.status_code == HTTP_201_CREATED
+    assert second_response.status_code == HTTP_409_CONFLICT
+    assert second_response.json()["detail"] == "Username already exists"
+
+
+def test_login_success():
+    response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+
+    user_login = client.post(
+        "/auth/token",
+        data={
+            "username": "abdallah",
+            "password": "secret123",
+        },
+    )
+
+    assert response.status_code == HTTP_201_CREATED
+    assert user_login.status_code == HTTP_200_OK
+    assert user_login.json()["token_type"] == "bearer"
+    access_token = user_login.json()["access_token"]
+    assert isinstance(access_token, str)
+    assert access_token
+
+
+def test_login_rejects_wrong_password():
+    response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+
+    user_login = client.post(
+        "/auth/token",
+        data={
+            "username": "abdallah",
+            "password": "wrong-password",
+        },
+    )
+
+    assert response.status_code == HTTP_201_CREATED
+    assert user_login.status_code == HTTP_401_UNAUTHORIZED
+    assert user_login.json()["detail"] == "Incorrect username or password"
+    assert user_login.headers["www-authenticate"] == "Bearer"
+
+
+def test_get_current_user():
+    response = client.post(
+        "/auth/register",
+        json={"username": "abdallah", "password": "secret123"},
+    )
+    user_login = client.post(
+        "/auth/token",
+        data={
+            "username": "abdallah",
+            "password": "secret123",
+        },
+    )
+    access_token = user_login.json()["access_token"]
+
+    me_response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response.status_code == HTTP_201_CREATED
+    assert user_login.status_code == HTTP_200_OK
+    assert me_response.status_code == HTTP_200_OK
+    assert me_response.json()["username"] == "abdallah"
+    assert me_response.json()["role"] == "operator"
+    assert "password" not in me_response.json()
+    assert "hashed_password" not in me_response.json()
+
+
+def test_get_current_user_requires_token():
+    response = client.get("/auth/me")
+
+    assert response.status_code == HTTP_401_UNAUTHORIZED
+    assert response.json()["detail"] == "Not authenticated"
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_get_current_user_rejects_invalid_token():
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": "Bearer not-a-valid-token"},
+    )
+
+    assert response.status_code == HTTP_401_UNAUTHORIZED
+    assert response.json()["detail"] == "Could not validate credentials"
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_get_current_user_rejects_inactive_user(db_session):
+    user = create_user(
+        db_session,
+        "abdallah",
+        "secret123",
+    )
+
+    assert user is not None
+
+    user.is_active = False
+    db_session.commit()
+
+    access_token = create_access_token(user.username)
+
+    response = client.get(
+        "/auth/me",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+
+    assert response.status_code == HTTP_401_UNAUTHORIZED
+    assert response.json()["detail"] == "Could not validate credentials"
+    assert response.headers["www-authenticate"] == "Bearer"
+
+
+def test_create_product_requires_authentication():
+    response = client.post(
+        "/products",
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+
+    assert response.status_code == HTTP_401_UNAUTHORIZED
+    assert response.json()["detail"] == "Not authenticated"
+
+
+def test_create_product_rejects_operator():
+    client.post(
+        "/auth/register",
+        json={
+            "username": "operator",
+            "password": "secret123",
+        },
+    )
+
+    login_response = client.post(
+        "/auth/token",
+        data={
+            "username": "operator",
+            "password": "secret123",
+        },
+    )
+
+    access_token = login_response.json()["access_token"]
+
+    response = client.post(
+        "/products",
+        headers={"Authorization": f"Bearer {access_token}"},
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+    assert response.status_code == HTTP_403_FORBIDDEN
+    assert response.json()["detail"] == "Admin access required"

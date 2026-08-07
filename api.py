@@ -3,15 +3,19 @@ from decimal import Decimal
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
 from starlette.status import (
     HTTP_201_CREATED,
+    HTTP_401_UNAUTHORIZED,
+    HTTP_403_FORBIDDEN,
     HTTP_404_NOT_FOUND,
     HTTP_409_CONFLICT,
 )
 
 from database import get_db
+from models import User
 from order_repository import (
     InsufficientStockError,
     OrderAlreadyCancelledError,
@@ -27,8 +31,54 @@ from product_repository import delete_product as delete_product_from_db
 from product_repository import find_product_by_sku as find_product_by_sku_in_db
 from product_repository import list_products as list_products_from_db
 from product_repository import update_product_quantity as update_quantity_in_db
+from security import create_access_token, decode_access_token
+from user_repository import authenticate_user
+from user_repository import create_user as create_user_in_db
+from user_repository import find_user_by_username as find_user_by_username_in_db
 
 DatabaseSession = Annotated[Session, Depends(get_db)]
+LoginForm = Annotated[OAuth2PasswordRequestForm, Depends()]
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
+AccessToken = Annotated[str, Depends(oauth2_scheme)]
+
+
+def get_current_user(
+    token: AccessToken,
+    db: DatabaseSession,
+) -> User:
+    username = decode_access_token(token)
+
+    if username is None:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = find_user_by_username_in_db(db, username)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    return user
+
+
+CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def require_admin(current_user: CurrentUser) -> User:
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=HTTP_403_FORBIDDEN,
+            detail="Admin access required",
+        )
+
+    return current_user
+
+
+AdminUser = Annotated[User, Depends(require_admin)]
 
 
 class ProductCreate(BaseModel):
@@ -61,6 +111,34 @@ class QuantityUpdate(BaseModel):
     quantity: int = Field(ge=0)
 
 
+class UserCreate(BaseModel):
+    username: str = Field(min_length=3, max_length=50)
+    password: str = Field(min_length=8, max_length=128)
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def validate_username(cls, value: str) -> str:
+        cleaned_value = value.strip()
+        if not cleaned_value:
+            raise ValueError("Username must not be blank")
+        return cleaned_value
+
+
+class UserResponse(BaseModel):
+    id: int
+    username: str
+    role: str
+    is_active: bool
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str
+
+
 app = FastAPI()
 
 
@@ -84,6 +162,7 @@ def list_products(db: DatabaseSession):
 def create_new_product(
     product: ProductCreate,
     db: DatabaseSession,
+    _admin: AdminUser,
 ):
     created_product = create_product_in_db(
         db,
@@ -115,7 +194,12 @@ def get_product(sku: str, db: DatabaseSession):
 
 
 @app.patch("/products/{sku}/quantity", response_model=ProductResponse)
-def update_quantity(sku: str, db: DatabaseSession, update: QuantityUpdate):
+def update_quantity(
+    sku: str,
+    update: QuantityUpdate,
+    db: DatabaseSession,
+    _admin: AdminUser,
+):
     result = update_quantity_in_db(db, sku, update.quantity)
 
     if result is None:
@@ -124,7 +208,11 @@ def update_quantity(sku: str, db: DatabaseSession, update: QuantityUpdate):
 
 
 @app.delete("/products/{sku}")
-def remove_product(sku: str, db: DatabaseSession):
+def remove_product(
+    sku: str,
+    db: DatabaseSession,
+    _admin: AdminUser,
+):
 
     result = delete_product_from_db(db, sku)
 
@@ -188,7 +276,11 @@ class OrderResponse(BaseModel):
     status_code=HTTP_201_CREATED,
     response_model=OrderResponse,
 )
-def create_new_order(order_data: OrderCreate, db: DatabaseSession):
+def create_new_order(
+    order_data: OrderCreate,
+    db: DatabaseSession,
+    _current_user: CurrentUser,
+):
     items = []
 
     for item in order_data.items:
@@ -229,7 +321,11 @@ def get_order(order_id: int, db: DatabaseSession):
     "/orders/{order_id}/cancel",
     response_model=OrderResponse,
 )
-def cancel_existing_order(order_id: int, db: DatabaseSession):
+def cancel_existing_order(
+    order_id: int,
+    db: DatabaseSession,
+    _current_user: CurrentUser,
+):
     try:
         return cancel_order(db, order_id)
 
@@ -244,3 +340,45 @@ def cancel_existing_order(order_id: int, db: DatabaseSession):
             status_code=HTTP_409_CONFLICT,
             detail=f"Order is already cancelled: {error}",
         ) from error
+
+
+@app.post(
+    "/auth/register",
+    response_model=UserResponse,
+    status_code=HTTP_201_CREATED,
+)
+def register_user(user: UserCreate, db: DatabaseSession):
+    created_user = create_user_in_db(db, user.username, user.password)
+
+    if created_user is None:
+        raise HTTPException(
+            status_code=HTTP_409_CONFLICT,
+            detail="Username already exists",
+        )
+    return created_user
+
+
+@app.post("/auth/token", response_model=TokenResponse)
+def login(form_data: LoginForm, db: DatabaseSession):
+    user = authenticate_user(
+        db,
+        form_data.username,
+        form_data.password,
+    )
+    if user is None:
+        raise HTTPException(
+            status_code=HTTP_401_UNAUTHORIZED,
+            detail="Incorrect username or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    access_token = create_access_token(user.username)
+
+    return {
+        "access_token": access_token,
+        "token_type": "bearer",
+    }
+
+
+@app.get("/auth/me", response_model=UserResponse)
+def read_current_user(current_user: CurrentUser):
+    return current_user
