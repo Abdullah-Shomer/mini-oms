@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -45,8 +45,24 @@ def find_product_by_sku(
     return session.scalar(statement)
 
 
-def list_products(session: Session) -> list[Product]:
-    statement = select(Product).order_by(Product.id)
+def list_products(
+    session: Session,
+    skip: int,
+    limit: int,
+    search: str | None,
+) -> list[Product]:
+    statement = select(Product)
+
+    if search:
+        pattern = f"%{search}%"
+        statement = statement.where(
+            or_(
+                Product.name.ilike(pattern),
+                Product.sku.ilike(pattern),
+            )
+        )
+
+    statement = statement.order_by(Product.id).offset(skip).limit(limit)
 
     return list(session.scalars(statement).all())
 

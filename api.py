@@ -1,8 +1,8 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Optional
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy.orm import Session
@@ -150,8 +150,13 @@ def root():
 
 
 @app.get("/products", response_model=list[ProductResponse])
-def list_products(db: DatabaseSession):
-    return list_products_from_db(db)
+def list_products(
+    db: DatabaseSession,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    search: Annotated[Optional[str], Query(max_length=100)] = None,  # noqa: FA100
+):
+    return list_products_from_db(db, skip, limit, search)
 
 
 @app.post(

@@ -706,3 +706,95 @@ def test_create_product_rejects_operator():
     )
     assert response.status_code == HTTP_403_FORBIDDEN
     assert response.json()["detail"] == "Admin access required"
+
+
+def test_list_products_pagination(admin_headers):
+    for i in range(1, 4):
+        client.post(
+            "/products",
+            headers=admin_headers,
+            json={
+                "name": f"Product {i}",
+                "sku": f"KB-{i:03d}",
+                "price": 10 + i,
+                "quantity": 5 + i,
+            },
+        )
+
+    response = client.get("/products?skip=1&limit=1")
+
+    assert response.status_code == HTTP_200_OK
+    assert len(response.json()) == 1
+    assert response.json()[0]["sku"] == "KB-002"
+
+
+def test_list_products_rejects_negative_skip():
+    response = client.get("/products?skip=-1&limit=20")
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_list_products_rejects_limit_above_maximum():
+    response = client.get("/products?skip=0&limit=101")
+
+    assert response.status_code == HTTP_422_UNPROCESSABLE_CONTENT
+
+
+def test_list_products_filters_by_name(admin_headers):
+    client.post(
+        "/products",
+        headers=admin_headers,
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+
+    client.post(
+        "/products",
+        headers=admin_headers,
+        json={
+            "name": "Mouse",
+            "sku": "MS-001",
+            "price": 15,
+            "quantity": 20,
+        },
+    )
+
+    response = client.get("/products?search=key")
+
+    assert response.status_code == HTTP_200_OK
+    assert len(response.json()) == 1
+    assert response.json()[0]["name"] == "Keyboard"
+
+
+def test_list_products_filters_by_sku(admin_headers):
+    client.post(
+        "/products",
+        headers=admin_headers,
+        json={
+            "name": "Keyboard",
+            "sku": "KB-001",
+            "price": 25,
+            "quantity": 10,
+        },
+    )
+
+    client.post(
+        "/products",
+        headers=admin_headers,
+        json={
+            "name": "Mouse",
+            "sku": "MS-001",
+            "price": 15,
+            "quantity": 20,
+        },
+    )
+
+    response = client.get("/products?search=ms-001")
+
+    assert response.status_code == HTTP_200_OK
+    assert len(response.json()) == 1
+    assert response.json()[0]["sku"] == "MS-001"
