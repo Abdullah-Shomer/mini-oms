@@ -23,6 +23,13 @@ def test_root():
     assert response.json() == {"message": "Mini OMS API"}
 
 
+def test_health_check():
+    response = client.get("/health")
+
+    assert response.status_code == HTTP_200_OK
+    assert response.json() == {"status": "healthy"}
+
+
 def test_create_product(admin_headers):
 
     response = client.post(
@@ -793,7 +800,7 @@ def test_list_products_filters_by_sku(admin_headers):
         },
     )
 
-    response = client.get("/products?search=ms-001")
+    response = client.get("/products?search=ms")
 
     assert response.status_code == HTTP_200_OK
     assert len(response.json()) == 1
